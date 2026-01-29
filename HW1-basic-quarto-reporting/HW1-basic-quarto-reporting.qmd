@@ -1,0 +1,167 @@
+---
+title: "Spotify Dataset Analysis"
+author: "Collin McNeil"
+date: "01-28-2026"
+format:
+  html:
+    embed-resources: true
+---
+
+## Introduction
+
+This report analyzes a dataset of popular songs from Spotify
+
+The goal of this analysis is to explore patterns in the data and understand how musical features relate to one another and song popularity.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+spotify <- read.csv("data/spotify.csv")
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(DT)
+```
+
+## Data Overview
+
+The Spotify dataset contains the following variables:
+
+- **streams_mill**: Number of streams in millions
+- **released_month**: Month the song was released (1-12)
+- **mode**: Musical mode (Major or Minor)
+- **key**: Musical key (12 different keys)
+- **bpm**: Tempo in beats per minute
+- **danceability**: Danceability score (0-100)
+- **energy**: Energy level (0-100)
+- **liveness**: Likelihood of live performance recording
+
+
+## Visual Analysis
+
+### Musical Characteristics: Live vs. Studio Recordings
+
+The visualization below compares musical characteristics between live performances (liveness ≥ 50) and studio recordings (liveness < 50). Live recordings may exhibit different energy patterns, streaming performance, and musical features compared to their studio-produced counterparts.
+
+```{r}
+#| echo: false
+#| fig-width: 10
+#| fig-height: 6
+#| fig-align: "center"
+
+# Create live vs studio category
+# Songs with liveness >= 80 are classified as "Live"
+# Songs with liveness < 80 are classified as "Studio"
+spotify_live <- spotify %>%
+  mutate(recording_type = ifelse(liveness >= 80, "Live", "Studio"))
+
+# Create summary statistics grouped by recording type
+comparison_data <- spotify_live %>%
+  group_by(recording_type) %>%
+  summarise(
+    `Avg Energy` = mean(energy),
+    `Avg Danceability` = mean(danceability),
+    `Avg BPM` = mean(bpm),
+    `Avg Streams (millions)` = mean(streams_mill)
+  ) %>%
+  # Reshape data from wide to long format for ggplot
+  pivot_longer(cols = -recording_type,
+               names_to = "Metric",
+               values_to = "Value")
+
+# Create grouped bar plot comparing live vs studio recordings
+ggplot(comparison_data, aes(x = Metric, y = Value, fill = recording_type)) +
+  geom_col(position = "dodge", width = 0.7) + # Grouped bars side-by-side
+  scale_fill_manual(values = c("Live" = "salmon", "Studio" = "darkgray")) +
+  # Adjust visuals & labels
+  labs(
+    title = "Live Performances vs. Studio Recordings",
+    subtitle = "Comparing average musical characteristics and streaming performance",
+    x = "",
+    y = "Average Value",
+    fill = "Recording Type"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11)
+  )
+```
+
+This comparison shows notable differences between live and studio recordings. Studio recordings show higher mean streaming numbers, suggesting greater commercial success. The musical characteristics show comparable values.
+
+## Summary Table Analysis
+
+### Major vs. Minor Mode Comparison
+
+The table below compares songs in major and minor keys across several dimensions. Musical mode can influence the emotional tone of a song, and this analysis examines whether mode correlates with other musical features or streaming success.
+
+```{r}
+#| echo: false
+
+# Calculate summary statistics by musical mode (Major vs Minor)
+summary_table <- spotify %>%
+  group_by(mode) %>%
+  summarise(
+    # Means by mode & clean up excessive decimal places
+    `Number of Songs` = n(), # Count of songs in each mode
+    `Avg Streams (millions)` = round(mean(streams_mill), 2), # Mean streams
+    `Median Streams (millions)` = round(median(streams_mill), 2), # Median streams
+    `Avg BPM` = round(mean(bpm), 1), # Average tempo
+    `Avg Danceability` = round(mean(danceability), 1), # Average danceability score
+    `Avg Energy` = round(mean(energy), 1) # Average energy level
+  )
+
+# Center text, add caption & visual style to table
+kable(summary_table, 
+      align = c('c', 'c', 'c', 'c', 'c', 'c', 'c'), # Center all columns
+      caption = "Summary Statistics by Musical Mode") %>%
+  kable_styling(bootstrap_options = c("hover", "bordered"), # Table styling
+                full_width = FALSE, # Don't stretch to fit full width
+                position = "center") %>%
+  row_spec(0, bold = TRUE, color = "white", background = "gray30") # Style header row
+
+```
+
+Major mode songs outnumber minor mode songs in the dataset. Although major slightly outperforms minor, both modes show similar average streaming numbers, suggesting that musical mode alone is not a very strong predictor of commercial success. Minor mode songs show slightly lower danceability on average, which aligns with the typically more somber or emotional quality of minor keys.
+
+### Top Streaming Songs
+
+The interactive table below displays songs sorted by streaming numbers, allowing exploration of the most popular tracks and their characteristics. Use the search and filter features to identify patterns among top performers.
+
+```{r}
+#| echo: false
+
+# Prepare data for interactive table
+top_songs <- spotify %>%
+  arrange(desc(streams_mill)) %>% # Sort by streams (descending)
+  select(`Streams (millions)` = streams_mill, # Select & rename columns
+         Mode = mode,
+         Key = key,
+         BPM = bpm,
+         Danceability = danceability,
+         Energy = energy,
+         `Release Month` = released_month)
+
+# Create interactive table using DT package
+datatable(top_songs,
+          options = list(
+            pageLength = 10, # Show 10 rows per page
+            scrollX = TRUE, # Enable horizontal scrolling
+            dom = 'Bfrtip' # Table control elements
+          ),
+          caption = "All Songs by Streaming Performance",
+          rownames = FALSE, # Don't show row numbers
+          filter = 'top') %>% # Add column filters at top
+  formatRound(columns = 'Streams (millions)', digits = 2) # Round streams to 2 decimals
+```
+
+## Conclusion
+
+This analysis reveals several interesting patterns in the Spotidy dataset. Studio recordings dominate both the dataset and streaming performance, with live recordings representing a small number of recordings. The comparison between major and minor modes shows that while mode influences certain musical characteristics like danceability, it does not appear to significantly impact streaming success.
+
+The most popular songs span a wide range of musical keys, tempos, and characteristics, suggesting that commercial success is multifaceted and not solely determined by individual musical attributes. Both highly danceable tracks and more subdued songs can achieve significant streaming numbers, reflecting diverse listener preferences on the platform.
