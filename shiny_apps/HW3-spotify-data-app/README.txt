@@ -1,1 +1,1 @@
-Provide an overview and description of your app.
+This Shiny app visualizes song data from a Spotify dataset.
