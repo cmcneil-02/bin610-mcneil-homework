@@ -1,28 +1,287 @@
 ---
-title: "Untitled"
+title: "Alzheimer's Disease Gene Expression Report"
 author: "Collin McNeil"
 format:
   html:
     embed-resources: true
+    html-table-processing: none
+params:
+  data_path: "data/AD_hippocampus_de.csv"
+  brain_region: "Hippocampus"
 ---
-
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this 
 
 ```{r}
 #| echo: false
-2 * 2
+#| message: false
+#| warning: false 
+
+library(tidyverse)
+library(kableExtra)
+library(DT)
+
+# Load the differential expression results for this brain region
+de <- read.csv(params$data_path)
+
+# Derive the matching expression matrix path from the DE file path
+# e.g., "data/AD_hippocampus_de.csv" -> "data/AD_hippocampus_expr.csv"
+expr_path <- str_replace(params$data_path, "_de\\.csv$", "_expr.csv")
+expr_wide <- read.csv(expr_path)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+# `r params$brain_region` — Gene Expression Analysis
+
+This report summarizes differential gene expression between Alzheimer's disease (AD) patients
+and age-matched controls in the **`r params$brain_region`** using microarray data from the
+GSE48350 dataset (253 postmortem brain samples; 80 AD, 173 controls).
+
+---
+
+## Differential Expression Summary
+
+The table below shows an overview of gene expression changes detected in the
+`r params$brain_region`.
+
+```{r}
+#| echo: false
+
+# Count genes meeting the significance threshold (adj. p < 0.05)
+n_sig <- sum(de$adj_p_value < 0.05, na.rm = TRUE)
+
+# Count significantly upregulated genes (positive fold change in AD)
+n_up <- sum(de$adj_p_value < 0.05 & de$log2_fold_change > 0, na.rm = TRUE)
+
+# Count significantly downregulated genes (negative fold change in AD)
+n_down <- sum(de$adj_p_value < 0.05 & de$log2_fold_change < 0, na.rm = TRUE)
+
+# Total number of genes tested (all rows in the DE results)
+n_tested <- nrow(de)
+
+# Build a summary data frame and render as a static striped kable table
+data.frame(
+  Metric = c(
+    "Total genes tested",
+    "Significantly DE genes (adj. p < 0.05)",
+    "Upregulated in AD (adj. p < 0.05)",
+    "Downregulated in AD (adj. p < 0.05)"
+  ),
+  Count = c(n_tested, n_sig, n_up, n_down)
+) %>%
+  knitr::kable(
+    col.names = c("Metric", "Count"),
+    align = c("l", "c") # Left-align labels, center-align counts
+  ) %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE, position = "center")
+```
+
+---
+
+## Top Differentially Expressed Genes
+
+The top 100 genes showing the largest absolute fold changes (AD vs. control). Use the search box and column headers to explore the data.
+
+```{r}
+#| echo: false
+
+de %>%
+  filter(!is.na(gene_symbol)) %>%             # Drop unmapped probes with no gene symbol
+  arrange(desc(abs(log2_fold_change))) %>%    # Sort by magnitude of fold change (largest first)
+  distinct(gene_symbol, .keep_all = TRUE) %>% # Keep only the highest-FC row per gene
+  slice_head(n = 100) %>%                     # Take the top 100 genes
+  mutate(
+    log2_fold_change = round(log2_fold_change, 3),                # Round FC to 3 decimal places
+    adj_p_value = formatC(adj_p_value, format = "e", digits = 2), # Scientific notation
+    avg_expression = round(avg_expression, 3),                    # Round expression to 3 decimals
+    t_statistic = round(t_statistic, 3),                          # Round t-stat to 3 decimals
+    Direction = ifelse(log2_fold_change > 0, "Up", "Down")        # Label direction of change
+  ) %>%
+  select(gene_symbol, log2_fold_change, adj_p_value, avg_expression, t_statistic, Direction) %>%
+  datatable(
+    colnames = c("Gene", "Log2 Fold Change", "Adj. p-value",
+                 "Avg. Expression", "T-statistic", "Direction"),
+    rownames = FALSE # Suppress default row numbers
+  )
+```
+
+---
+
+## Most Significant Genes
+
+The top 100 genes with the lowest adjusted p-values. Use the search box and column headers to explore the data.
+
+```{r}
+#| echo: false
+
+de %>%
+  filter(!is.na(gene_symbol)) %>%             # Drop unmapped probes with no gene symbol
+  arrange(adj_p_value) %>%                    # Sort by adjusted p-value (most significant first)
+  distinct(gene_symbol, .keep_all = TRUE) %>% # Keep only the most significant row per gene
+  slice_head(n = 100) %>%                     # Take the top 100 genes
+  mutate(
+    log2_fold_change = round(log2_fold_change, 3),                # Round FC to 3 decimal places
+    adj_p_value = formatC(adj_p_value, format = "e", digits = 2), # Scientific notation
+    avg_expression = round(avg_expression, 3),                    # Round expression to 3 decimals
+    t_statistic = round(t_statistic, 3),                          # Round t-stat to 3 decimals
+    Direction = ifelse(log2_fold_change > 0, "Up", "Down")        # Label direction of change
+  ) %>%
+  select(gene_symbol, log2_fold_change, adj_p_value, avg_expression, t_statistic, Direction) %>%
+  datatable(
+    colnames = c("Gene", "Log2 Fold Change", "Adj. p-value",
+                 "Avg. Expression", "T-statistic", "Direction"),
+    rownames = FALSE # Suppress default row numbers
+  )
+```
+
+---
+
+## Volcano Plot
+
+Each point is a gene. The x-axis shows the magnitude of change (log2 fold change) and the
+y-axis shows statistical confidence. Genes in **red** are significantly upregulated in AD;
+genes in **blue** are significantly downregulated; genes in **gray** do not meet the
+significance threshold (adj. p < 0.05).
+
+```{r}
+#| echo: false
+#| fig-width: 8
+#| fig-height: 6
+
+de %>%
+  # Remove the top 1% of extreme values on both axes to prevent outliers
+  # from compressing the bulk of the data into an unreadable cluster
+  filter(
+    abs(log2_fold_change) <= quantile(abs(log2_fold_change), 0.99, na.rm = TRUE),
+    -log10(adj_p_value) <= quantile(-log10(adj_p_value),   0.99, na.rm = TRUE)
+  ) %>%
+  # Classify each gene as upregulated, downregulated, or not significant
+  mutate(
+    sig = case_when(
+      adj_p_value < 0.05 & log2_fold_change > 0 ~ "Upregulated",
+      adj_p_value < 0.05 & log2_fold_change < 0 ~ "Downregulated",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = log2_fold_change, y = -log10(adj_p_value), color = sig)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(
+    name = "Expression Change",
+    values = c("Upregulated" = "red", "Downregulated" = "blue", "Not significant" = "gray70")
+  ) +
+  # Vertical line at x = 0: divides upregulated (right) from downregulated (left)
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.4) +
+  # Horizontal line at -log10(0.05): marks the adj. p < 0.05 significance threshold
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black", linewidth = 0.4) +
+  labs(
+    title = paste0("Volcano Plot — ", params$brain_region),
+    subtitle = "AD vs. Control | adj. p < 0.05 threshold shown",
+    x = "Log2 Fold Change (AD / Control)",
+    y = "-Log10 (Adjusted p-value)"
+  ) +
+  theme_bw()
+```
+
+---
+
+## Top Differentially Expressed Genes — Bar Chart
+
+The 20 genes with the largest absolute fold change, ordered by magnitude. Red bars indicate
+upregulation in AD; blue bars indicate downregulation.
+
+```{r}
+#| echo: false
+#| fig-width: 8
+#| fig-height: 6
+
+de %>%
+  arrange(desc(abs(log2_fold_change))) %>%    # Sort by magnitude of fold change
+  distinct(gene_symbol, .keep_all = TRUE) %>% # One row per gene (highest FC)
+  slice_head(n = 20) %>%                      # Top 20 genes only
+  mutate(
+    # Reorder gene_symbol factor by absolute FC so bars sort from smallest to largest
+    gene_symbol = fct_reorder(gene_symbol, abs(log2_fold_change)),
+    direction = ifelse(log2_fold_change > 0, "Upregulated", "Downregulated")
+  ) %>%
+  ggplot(aes(x = gene_symbol, y = log2_fold_change, fill = direction)) +
+  geom_col() +
+  scale_fill_manual(
+    name = "Direction",
+    values = c("Upregulated" = "red", "Downregulated" = "blue")
+  ) +
+  coord_flip() + # Flip to horizontal bars so gene names are readable
+  labs(
+    title = paste0("Top 20 DE Genes by Fold Change — ", params$brain_region),
+    subtitle = "AD vs. Control",
+    x = "Gene",
+    y = "Log2 Fold Change"
+  ) +
+  theme_bw()
+```
+
+---
+
+## Heatmap of Top 10 Most Significant Genes
+
+Rows are the 10 most statistically significant genes; columns are individual samples.
+Color represents normalized expression level. Samples are grouped by disease status.
+
+```{r}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 5
+
+# Pivot expression matrix from wide format (one column per sample) to long format
+# (one row per gene-sample combination) so ggplot can map sample and gene to axes
+expr_long <- expr_wide %>%
+  pivot_longer(-gene_symbol, names_to = "sample", values_to = "expression") %>%
+  mutate(
+    # Extract condition label from the sample name prefix (e.g., "AD" or "Control")
+    condition = str_extract(sample, "^[^_]+")
+  )
+
+# Build an ordered list of the top 10 most significant gene symbols from the DE results
+gene_order <- de %>%
+  filter(!is.na(gene_symbol)) %>% # Drop probes with no gene symbol
+  arrange(adj_p_value) %>%        # Most significant first
+  pull(gene_symbol) %>%
+  unique() %>%                    # One entry per gene symbol
+  head(10)
+
+# Build an ordered list of samples: all controls first, then all AD samples
+# This groups the heatmap columns by condition for easy visual comparison
+sample_order <- expr_long %>%
+  distinct(sample, condition) %>%
+  arrange(condition, sample) %>%
+  pull(sample)
+
+# Filter to only the top 10 genes and apply factor ordering to both axes
+# so ggplot2 renders rows and columns in the correct order
+expr_long <- expr_long %>%
+  filter(gene_symbol %in% gene_order) %>%
+  mutate(
+    gene_symbol = factor(gene_symbol, levels = rev(gene_order)), # Reverse so top gene is at top
+    sample = factor(sample, levels = sample_order)
+  )
+
+ggplot(expr_long, aes(x = sample, y = gene_symbol, fill = expression)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue",  # Low expression = blue
+    mid = "white", # Median expression = white
+    high = "red",  # High expression = red
+    midpoint = median(expr_long$expression, na.rm = TRUE), # Center color scale at median
+    name = "Expression\n(log2)"
+  ) +
+  # Split columns into facets by condition, allowing each panel to use only its own samples
+  facet_grid(. ~ condition, scales = "free_x", space = "free_x") +
+  labs(
+    title = paste0("Heatmap of Top 10 Significant Genes — ", params$brain_region),
+    subtitle = "AD vs. Control | Grouped by disease status",
+    x = "Sample",
+    y = "Gene"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_blank(),     # Hide sample names (too many to read)
+    axis.ticks.x = element_blank(),    # Remove tick marks on x-axis
+    panel.spacing = unit(0.2, "lines") # Narrow gap between AD and Control panels
+  )
+```
